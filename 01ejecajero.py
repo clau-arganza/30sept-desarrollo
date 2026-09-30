@@ -1,6 +1,8 @@
 from datetime import datetime
+from math import isfinite
 
 
+# Defino errores específicos para las operaciones del banco.
 class SaldoInsuficiente(Exception):
     pass
 
@@ -9,27 +11,19 @@ class CuentaNoExiste(Exception):
     pass
 
 
+class LimiteRetiradaSuperado(Exception):
+    pass
+
+
 class Movimiento:
     def __init__(self, concepto, importe):
-        # Encapsulo los atributos del movimiento.
+        # Guardo los datos como privados.
         self.__fecha = datetime.now()
         self.__concepto = concepto
         self.__importe = importe
 
-    # Estas propiedades permiten consultar los datos.
-    @property
-    def fecha(self):
-        return self.__fecha
-
-    @property
-    def concepto(self):
-        return self.__concepto
-
-    @property
-    def importe(self):
-        return self.__importe
-
     def __str__(self):
+        # Indico cómo se muestra un movimiento al imprimirlo.
         return (
             f"{self.__fecha:%d/%m/%Y %H:%M:%S} | "
             f"{self.__concepto:<20} | "
@@ -38,16 +32,26 @@ class Movimiento:
 
 
 class Cuenta:
-    def __init__(self, numero, titular, saldo):
-        if saldo < 0:
-            raise ValueError("El saldo inicial no puede ser negativo.")
+    def __init__(self, numero, titular, saldo, limite_retirada=1000):
+        # Compruebo que los valores iniciales sean válidos.
+        if not isfinite(saldo) or saldo < 0:
+            raise ValueError("El saldo inicial debe ser finito y no negativo.")
 
-        # Los atributos se gestionan desde los métodos de la clase.
+        if not isfinite(limite_retirada) or limite_retirada <= 0:
+            raise ValueError("El límite debe ser finito y mayor que cero.")
+
+        # Encapsulo los atributos para controlar su modificación.
         self.__numero = numero
         self.__titular = titular
         self.__saldo = saldo
         self.__movimientos = []
 
+        # Acumulo las retiradas durante la ejecución del programa.
+        self.__limite_retirada = limite_retirada
+        self.__retirado = 0
+
+    # Las propiedades permiten consultar los datos.
+    # Al no definir setters, no permiten asignarles valores directamente.
     @property
     def numero(self):
         return self.__numero
@@ -61,18 +65,19 @@ class Cuenta:
         return self.__saldo
 
     @property
-    def movimientos(self):
-        # Devuelvo una tupla para no exponer la lista interna.
-        return tuple(self.__movimientos)
+    def disponible_retirada(self):
+        # Calculo cuánto queda del límite de retirada.
+        return self.__limite_retirada - self.__retirado
 
     def __validar_cantidad(self, cantidad):
-        # Compruebo que el importe sea positivo.
-        if cantidad <= 0:
-            raise ValueError("La cantidad debe ser mayor que cero.")
+        # Este método privado comprueba los importes.
+        if not isfinite(cantidad) or cantidad <= 0:
+            raise ValueError("La cantidad debe ser finita y mayor que cero.")
 
     def ingresar(self, cantidad):
         self.__validar_cantidad(cantidad)
 
+        # Aumento el saldo y registro el ingreso.
         self.__saldo += cantidad
         self.__movimientos.append(
             Movimiento("Ingreso", cantidad)
@@ -81,10 +86,22 @@ class Cuenta:
     def retirar(self, cantidad):
         self.__validar_cantidad(cantidad)
 
+        # Compruebo el saldo antes de modificar la cuenta.
         if cantidad > self.__saldo:
-            raise SaldoInsuficiente("Saldo insuficiente")
+            raise SaldoInsuficiente("Saldo insuficiente.")
 
+        # Compruebo el total acumulado, no solo esta retirada.
+        if cantidad > self.disponible_retirada:
+            raise LimiteRetiradaSuperado(
+                f"Has superado el límite de retirada. "
+                f"Puedes retirar como máximo "
+                f"{self.disponible_retirada:.2f} € más."
+            )
+
+        # Solo actualizo los datos si se cumplen las condiciones.
         self.__saldo -= cantidad
+        self.__retirado += cantidad
+
         self.__movimientos.append(
             Movimiento("Retirada", -cantidad)
         )
@@ -96,18 +113,18 @@ class Cuenta:
             raise ValueError("El destino debe ser una cuenta.")
 
         if destino is self:
-            raise ValueError(
-                "No puedes transferir dinero a la misma cuenta."
-            )
+            raise ValueError("No puedes transferir a la misma cuenta.")
 
         if cantidad > self.__saldo:
-            raise SaldoInsuficiente("Saldo insuficiente")
+            raise SaldoInsuficiente("Saldo insuficiente.")
 
-        # Desde la clase Cuenta puedo acceder a los atributos
-        # privados de otra instancia de esta misma clase.
+        # Una transferencia mueve dinero entre dos cuentas.
+        # No cuenta como retirada de efectivo.
         self.__saldo -= cantidad
         destino.__saldo += cantidad
 
+        # Dentro de Cuenta puedo acceder a los atributos privados
+        # de otra instancia de la misma clase.
         self.__movimientos.append(
             Movimiento(
                 f"Transferencia a {destino.numero}",
@@ -123,6 +140,7 @@ class Cuenta:
         )
 
     def mostrar_movimientos(self):
+        # Muestro la información sin exponer la lista interna.
         if not self.__movimientos:
             print("\nNo hay movimientos.")
             return
@@ -135,10 +153,11 @@ class Cuenta:
 
 class Banco:
     def __init__(self):
-        # Encapsulo el diccionario que almacena las cuentas.
+        # Guardo las cuentas en un diccionario privado.
         self.__cuentas = {}
 
     def agregar_cuenta(self, cuenta):
+        # Evito sobrescribir una cuenta que ya existe.
         if cuenta.numero in self.__cuentas:
             raise ValueError("Ya existe una cuenta con ese número.")
 
@@ -146,12 +165,13 @@ class Banco:
 
     def buscar_cuenta(self, numero):
         if numero not in self.__cuentas:
-            raise CuentaNoExiste("Cuenta no encontrada")
+            raise CuentaNoExiste("Cuenta no encontrada.")
 
         return self.__cuentas[numero]
 
 
 def menu_cuenta(cuenta, banco):
+    # Repito el menú hasta que el usuario cierre sesión.
     while True:
         print(f"\n=== CAJERO ({cuenta.titular}) ===")
         print("1. Consultar saldo")
@@ -165,8 +185,11 @@ def menu_cuenta(cuenta, banco):
 
         try:
             if opcion == "1":
-                # Consulto el saldo mediante su propiedad.
                 print(f"\nSaldo actual: {cuenta.saldo:.2f} €")
+                print(
+                    f"Disponible para retirar en esta ejecución: "
+                    f"{cuenta.disponible_retirada:.2f} €"
+                )
 
             elif opcion == "2":
                 cantidad = float(input("Cantidad: "))
@@ -191,12 +214,19 @@ def menu_cuenta(cuenta, banco):
                 cuenta.mostrar_movimientos()
 
             elif opcion == "6":
+                # Salgo del menú sin reiniciar las retiradas acumuladas.
                 break
 
             else:
                 print("Opción incorrecta.")
 
-        except (SaldoInsuficiente, CuentaNoExiste, ValueError) as e:
+        except (
+            SaldoInsuficiente,
+            CuentaNoExiste,
+            LimiteRetiradaSuperado,
+            ValueError
+        ) as e:
+            # Muestro el error y permito seguir usando el cajero.
             print("Error:", e)
 
 
@@ -205,19 +235,12 @@ def menu_cuenta(cuenta, banco):
 # =====================
 
 if __name__ == "__main__":
+    # Creo el banco y añado tres cuentas de ejemplo.
     banco = Banco()
 
-    banco.agregar_cuenta(
-        Cuenta("1001", "Sara", 2500)
-    )
-
-    banco.agregar_cuenta(
-        Cuenta("1002", "Luis", 1500)
-    )
-
-    banco.agregar_cuenta(
-        Cuenta("1003", "Ana", 3000)
-    )
+    banco.agregar_cuenta(Cuenta("1001", "Sara", 2500))
+    banco.agregar_cuenta(Cuenta("1002", "Luis", 1500))
+    banco.agregar_cuenta(Cuenta("1003", "Ana", 3000))
 
     while True:
         print("\n=== BANCO PYTHON ===")
