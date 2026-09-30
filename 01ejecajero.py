@@ -123,8 +123,7 @@ class Cuenta:
         self.__saldo -= cantidad
         destino.__saldo += cantidad
 
-        # Dentro de Cuenta puedo acceder a los atributos privados
-        # de otra instancia de la misma clase.
+        # Dentro de Cuenta puedo acceder a los atributos privados de otra instancia de la misma clase.
         self.__movimientos.append(
             Movimiento(
                 f"Transferencia a {destino.numero}",
